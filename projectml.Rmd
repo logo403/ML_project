@@ -1,0 +1,189 @@
+---
+title: "Project ML"
+author: "logo403"
+date: "January 29, 2016"
+output: html_document
+---
+```{r,echo=FALSE,results='hide'}
+suppressWarnings(suppressMessages(library(caret)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(knitr)))
+suppressWarnings(suppressMessages(library(rattle)))
+suppressWarnings(suppressMessages(library(randomForest)))
+```
+
+
+### Synopsis
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. The objective of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, train a model and predict the quality of 20 movements.
+
+This study selected the random forest model to predict the quality of movements. The near perfection overall accuracy provided by the model without complex tuning became an easy choice to predict the quality of the 20 missing movements. 
+
+
+### Methodology
+The data were already split into training and test data sets:
+
+- Training set: these data are used to estimate model parameters and to pick the values of the model. 
+
+- Test set (also known as validation set): these data can be used to get an independent assessment of model efficacy. There are 20 observations in that set and they will be used only at the end when the model is fully trained.
+
+
+To find an optimal model for our data, the training data set is splitted randomly into secondary training and testing sets within the classes to preserve the distribution of the outcome classes (See Figure 1 in Appendix)
+
+Afterward, cross-validation technique is used on this new training set to avoid model over-fitting and better tune model parameters. A repeated 10-fold cross-validation is used. 
+
+Finally, two models were trained to predict the test data set: a classification tree model and a random forest model. The models' performance are evaluated with the overall "accuracy" measure, since the classes are relatively well balanced, and the confusion matrix.
+
+Interpretability of the model is key, so only meaningful variables are kept in the model. Variables will a statistics or a x-y-z coordinates in their name are removed from the study.
+
+
+### Data cleaning and splitting
+The original training and the testing data are read here:
+```{r,cache=TRUE}
+train0 <- read.csv("pml-training.csv")
+test0 <- read.csv("pml-testing.csv")
+```
+
+**Data cleaning**
+
+
+Since they are all missing in the testing data file, the variables names beginning with a statistical function, such as std or kurtosis. For interpretability reasons the variables finishing with "x", "y" or "z" were removed from both files:
+
+```{r,cache=TRUE}
+allvar <- names(test0)
+vBeg <- c("kurt","skew","max","min","ampl","var","avg","std","_x","_y","_z")
+va <- vector()
+for(i in 1:length(vBeg)){ va <- c(va,grep(vBeg[i],allvar,value = FALSE))}
+train <- train0[,-va]
+test <- test0[,-va]
+```
+
+As explained at the end during the evaluation step, the exact value for outcome "classe" can be determined with the identifiers on both files. To make sure to have a model that follows the course procedures, all identifiers were also removed including the person's name.
+```{r,cache=TRUE}
+train <- select(train,-c(1:7))
+test <- select(test,-c(1:7))
+```
+
+Consequently, the data sets for this study have a total of 24 features (variables) and 1 outcome named "classe". The test file has no outcome.
+
+**Data splitting**
+
+To allow better control on over-fitting using cross-validation, the training set is splitted into two groups: 70% into a training data set and 30% into a testing data set. As shown in Figure 1, the classe's distribution stay the same for all three data sets.
+
+```{r,cache=TRUE}
+set.seed(123)
+inTrain <- createDataPartition(y=train$classe,
+                               p=0.7, list=FALSE)
+training <- train[inTrain,]
+testing <- train[-inTrain,]
+```
+
+
+### Over-fitting and resampling
+Resampling the training samples allows us to introduce artificial variation to not over-fit the model. Cross-validation is used on the training with a repeated 10-fold cross-validation. Before training the data, the cross-validation parameters are decided:
+```{r,cache=TRUE}
+cvCtrl <- trainControl(method = "repeatedcv", repeats = 1,
+                        classProbs = TRUE)
+```
+
+### Training and predicting data
+Two models are trained: a classification tree and a random forest. The first is a classification tree:
+
+```{r,cache=TRUE,results='hide'}
+set.seed(123)
+Fitrpart <- train(classe ~ ., 
+                    data = training, 
+                    method = "rpart",
+                    trControl = cvCtrl)
+Predrpart <- predict(Fitrpart,testing)
+```
+
+The second model to be trained is a random forest:
+```{r,cache=TRUE,results="hide"}
+set.seed(321)
+Fitrf <- train(training$classe ~ ., 
+                  data = training, 
+                  method = "rf",
+                  trControl = cvCtrl)
+Predrf <- predict(Fitrf,testing)
+```
+
+For both models, the results of the parameters training are transfered to the testing file, which will allow the assessment of their quality.
+
+
+### Model performance: Overall accuracy and Confusion matrix
+
+The two performance measures used in this study are the overall prediction accuracy, since the classes are balanced; and the confusion matrix which give a quick read at where the issues could be.
+
+```{r,cache=TRUE}
+# Tree classification
+Accuracyrpart <- confusionMatrix(Predrpart, testing$classe)$overall[1]
+cMrpart <- confusionMatrix(Predrpart, testing$classe)$table
+# Random Forest
+Accuracyrf <- confusionMatrix(Predrf, testing$classe)$overall[1]
+cMrf <- confusionMatrix(Predrf, testing$classe)$table
+```
+
+
+**Classification tree**
+
+```{r}
+Accuracyrpart
+kable(cMrpart)
+```
+
+**Random Forest**
+
+```{r}
+Accuracyrf
+kable(cMrf)
+```
+
+### Conclusion
+The classification tree provided only an overall accuracy of 55%. The random forest turn out to be much better for all classes with an accuracy near  100%. Consequently, the random forest model appears to be the optimal model to predict the 20 observations of the testing data set. 
+
+Given the identifiers were provided with the original testing data set, it is possible to determine empirically the exact classe of the 20 observations. In fact, the only identifier that was necessary is "num_window" which is unique for each individual and exercise from the training data set. So merging the training and the testing data sets by that variable provides the classe outcome directly to the testing data set.
+
+```{r,results='hide'}
+predRight <- inner_join(unique(train0[,c("num_window","classe")]),
+                        test0,by="num_window") %>% 
+        select(problem_id,classe,num_window) %>% arrange(problem_id)
+
+combPred <- predict(Fitrf,test0)
+```
+
+The exact testing data set outcome is then: `r combPred` 
+
+Using the above trained random forest model, it is possible to test how well it predicts the outcomes of the testing observations against those exact values. As shown, in the table below, the model was able to predict perfectly the 20 observations from the testing data set.
+
+```{r}
+kable(confusionMatrix(combPred, predRight$classe)$table)
+```
+
+
+### Acknowledment
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+
+### Appendix
+*Figure 1: Distribution of classe in the original training set and then in the secondary training and testing sets. The distribution is preserved following the random selection.*
+
+```{r,echo=FALSE}
+# Data exploratory
+a1 <- table(train$classe)/dim(train)[1]
+a2 <- table(training$classe)/dim(training)[1]
+a3 <- table(testing$classe)/dim(testing)[1]
+a <- rbind(a1,a2,a3)
+rownames(a) <- c("Original","Training","Testing")
+
+barplot(a, main = "Distribution of outcome classe",
+        xlab = "Classe", ylab = "Nb of observations",
+        col=c("darkblue","red","green"), legend = rownames(a), 
+        beside=TRUE)
+```
+
+*Figure 2: Classification tree*
+
+```{r,echo=FALSE}
+fancyRpartPlot(Fitrpart$finalModel)
+```
+
